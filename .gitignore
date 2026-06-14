@@ -1,2 +1,19 @@
+# Dependencies
 node_modules/
+
+# Environment variables — never commit secrets
 .env
+
+# SQLite database files
+data/
+*.sqlite
+*.sqlite-journal
+
+# OS / editor artefacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log

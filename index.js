@@ -1,78 +1,113 @@
-require('dotenv').config();
+import 'dotenv/config';
+import { Client, GatewayIntentBits, Collection, REST, Routes } from 'discord.js';
+import { readdirSync } from 'fs';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { join, dirname } from 'path';
+import { logger } from './utils/logger.js';
+import { initDb } from './utils/database.js';
 
-const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ─── Client Setup ─────────────────────────────────────────────────────────────
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages,
-  ],
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.MessageContent,
+    ],
 });
 
 client.commands = new Collection();
 
-// Load commands from the commands folder
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+// ─── Database ─────────────────────────────────────────────────────────────────
 
-for (const file of commandFiles) {
-  const command = require(path.join(commandsPath, file));
-  if (command.data && command.execute) {
-    client.commands.set(command.data.name, command);
-    console.log(`Loaded command: ${command.data.name}`);
-  }
+client.db = initDb();
+
+// ─── Load Commands ────────────────────────────────────────────────────────────
+
+async function loadCommands() {
+    const commandsPath = join(__dirname, 'commands');
+    const commandFiles = readdirSync(commandsPath).filter(f => f.endsWith('.js'));
+
+    for (const file of commandFiles) {
+        const filePath = pathToFileURL(join(commandsPath, file)).href;
+        const command = (await import(filePath)).default;
+        if (command?.data && command?.execute) {
+            client.commands.set(command.data.name, command);
+            logger.info(`Loaded command: ${command.data.name}`);
+        } else {
+            logger.warn(`Skipping ${file} — missing data or execute export`);
+        }
+    }
 }
 
-// Register slash commands and handle interactions on ready
-client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+// ─── Load Events ─────────────────────────────────────────────────────────────
 
-  const commands = client.commands.map(cmd => cmd.data.toJSON());
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+async function loadEvents() {
+    const eventsPath = join(__dirname, 'events');
+    const eventFiles = readdirSync(eventsPath).filter(f => f.endsWith('.js'));
 
-  try {
-    if (process.env.GUILD_ID) {
-      // Register to a specific guild for instant updates during development
-      await rest.put(
-        Routes.applicationGuildCommands(process.env.DISCORD_BOT_ID, process.env.GUILD_ID),
-        { body: commands },
-      );
-      console.log(`Registered ${commands.length} guild command(s) to guild ${process.env.GUILD_ID}`);
-    } else {
-      // Register globally
-      await rest.put(
-        Routes.applicationCommands(process.env.DISCORD_BOT_ID),
-        { body: commands },
-      );
-      console.log(`Registered ${commands.length} global command(s)`);
+    for (const file of eventFiles) {
+        const filePath = pathToFileURL(join(eventsPath, file)).href;
+        const event = (await import(filePath)).default;
+        if (event.once) {
+            client.once(event.name, (...args) => event.execute(...args, client));
+        } else {
+            client.on(event.name, (...args) => event.execute(...args, client));
+        }
+        logger.info(`Loaded event: ${event.name}`);
     }
-  } catch (error) {
-    console.error('Failed to register commands:', error);
-  }
-});
+}
 
-// Handle slash command interactions
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+// ─── Register Slash Commands ──────────────────────────────────────────────────
 
-  const command = client.commands.get(interaction.commandName);
-  if (!command) return;
+async function registerCommands() {
+    const token = process.env.DISCORD_TOKEN;
+    const clientId = process.env.DISCORD_BOT_ID;
+    const guildId = process.env.GUILD_ID;
 
-  try {
-    await command.execute(interaction, client);
-  } catch (error) {
-    console.error(`Error executing command ${interaction.commandName}:`, error);
-    const reply = { content: 'An error occurred while executing this command.', ephemeral: true };
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(reply).catch(() => {});
-    } else {
-      await interaction.reply(reply).catch(() => {});
+    if (!token || !clientId) {
+        logger.warn('DISCORD_TOKEN or DISCORD_BOT_ID not set — skipping command registration');
+        return;
     }
-  }
-});
 
-client.login(process.env.DISCORD_TOKEN);
+    const commands = [...client.commands.values()].map(cmd => cmd.data.toJSON());
+    const rest = new REST().setToken(token);
+
+    try {
+        if (guildId) {
+            // Guild-scoped registration (instant, good for development)
+            await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+            logger.info(`Registered ${commands.length} guild commands to ${guildId}`);
+        } else {
+            // Global registration (up to 1 hour propagation)
+            await rest.put(Routes.applicationCommands(clientId), { body: commands });
+            logger.info(`Registered ${commands.length} global commands`);
+        }
+    } catch (error) {
+        logger.error('Failed to register slash commands', { error: error.message });
+    }
+}
+
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+
+async function main() {
+    await loadCommands();
+    await loadEvents();
+    await registerCommands();
+
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) {
+        logger.error('DISCORD_TOKEN is not set. Cannot start the bot.');
+        process.exit(1);
+    }
+
+    await client.login(token);
+}
+
+main().catch(err => {
+    logger.error('Fatal error during startup', { error: err.message, stack: err.stack });
+    process.exit(1);
+});
