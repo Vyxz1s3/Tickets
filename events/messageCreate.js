@@ -81,10 +81,11 @@ async function handleDM(message, client) {
   // No open ticket — create one
   try {
     await message.channel.sendTyping().catch(() => {});
-    const ticket = await createTicket(client, message, guild.id, config.staffChannelId);
+    const ticket = await createTicket(client, message, guild.id, config.staffChannelId, config.modRoleId);
 
     await message.reply(
-      `✅ Your support ticket **#${ticket.ticketId}** has been opened! ` +
+      `Watching our dms 👀\n\n` +
+      `Your support ticket **#${ticket.ticketId}** has been opened! ` +
       `A staff member will be with you shortly.\n\n` +
       `Simply reply to this DM to send messages to the support team.`,
     ).catch(() => {});

@@ -32,6 +32,12 @@ module.exports = {
             .setDescription('The text channel to create ticket threads in')
             .addChannelTypes(ChannelType.GuildText)
             .setRequired(true),
+        )
+        .addRoleOption(opt =>
+          opt
+            .setName('mod-role')
+            .setDescription('The moderation role to ping when a new ticket is opened (default: built-in mod role)')
+            .setRequired(false),
         ),
     )
 
@@ -54,10 +60,13 @@ module.exports = {
 // /ticket setup
 // ---------------------------------------------------------------------------
 
+const DEFAULT_MOD_ROLE_ID = '1506696955730854019';
+
 async function runSetup(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   const channel = interaction.options.getChannel('channel');
+  const modRole = interaction.options.getRole('mod-role');
   const guildId = interaction.guildId;
 
   // Verify the bot can create threads in that channel
@@ -72,7 +81,8 @@ async function runSetup(interaction) {
     });
   }
 
-  setConfig(guildId, { staffChannelId: channel.id });
+  const modRoleId = modRole?.id ?? DEFAULT_MOD_ROLE_ID;
+  setConfig(guildId, { staffChannelId: channel.id, modRoleId });
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -84,6 +94,7 @@ async function runSetup(interaction) {
     )
     .addFields(
       { name: 'Staff Channel', value: `${channel} (\`${channel.id}\`)`, inline: false },
+      { name: 'Mod Role',      value: `<@&${modRoleId}> (\`${modRoleId}\`)`, inline: false },
     )
     .setTimestamp();
 
@@ -120,11 +131,16 @@ async function runDashboard(interaction) {
   const staffChannel = await interaction.guild.channels.fetch(config.staffChannelId).catch(() => null);
   const channelMention = staffChannel ? `${staffChannel}` : `\`${config.staffChannelId}\` *(not found)*`;
 
+  const modRoleMention = config.modRoleId
+    ? `<@&${config.modRoleId}> (\`${config.modRoleId}\`)`
+    : '*not set*';
+
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('🎫 Ticket System Dashboard')
     .addFields(
       { name: 'Staff Channel',   value: channelMention,              inline: false },
+      { name: 'Mod Role',        value: modRoleMention,              inline: false },
       { name: 'Open Tickets',    value: `${openTickets.length}`,     inline: true  },
       { name: 'Closed Tickets',  value: `${closedTickets.length}`,   inline: true  },
       { name: 'Total Tickets',   value: `${allTickets.length}`,      inline: true  },

@@ -115,9 +115,10 @@ function getTicketByThread(threadId) {
  * @param {import('discord.js').Message} dmMessage  — the triggering DM
  * @param {string} guildId
  * @param {string} staffChannelId
+ * @param {string} [modRoleId]  — optional role ID to ping in the thread
  * @returns {Promise<object>} the new ticket record
  */
-async function createTicket(client, dmMessage, guildId, staffChannelId) {
+async function createTicket(client, dmMessage, guildId, staffChannelId, modRoleId) {
   const user     = dmMessage.author;
   const ticketId = _nextId();
 
@@ -147,6 +148,13 @@ async function createTicket(client, dmMessage, guildId, staffChannelId) {
 
   // Post the opening embed + the user's first message into the thread
   await thread.send({ embeds: [openEmbed] });
+
+  // Ping the moderation role so staff are immediately notified
+  if (modRoleId) {
+    await thread.send({
+      content: `<@&${modRoleId}> New ticket #${ticketId} opened by <@${user.id}>`,
+    });
+  }
 
   if (dmMessage.content) {
     const firstMsgEmbed = new EmbedBuilder()
