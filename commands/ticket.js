@@ -60,7 +60,7 @@ module.exports = {
 // /ticket setup
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MOD_ROLE_ID = '1506696955730854019';
+const DEFAULT_MOD_ROLE_ID = '1506696956334968885';
 
 async function runSetup(interaction) {
   await interaction.deferReply({ ephemeral: true });
