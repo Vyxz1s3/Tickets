@@ -38,6 +38,13 @@ module.exports = {
             .setName('mod-role')
             .setDescription('The moderation role to ping when a new ticket is opened (default: built-in mod role)')
             .setRequired(false),
+        )
+        .addChannelOption(opt =>
+          opt
+            .setName('log-channel')
+            .setDescription('Channel where closed ticket transcripts are posted (optional)')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(false),
         ),
     )
 
@@ -65,9 +72,10 @@ const DEFAULT_MOD_ROLE_ID = '1506696956334968885';
 async function runSetup(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const channel = interaction.options.getChannel('channel');
-  const modRole = interaction.options.getRole('mod-role');
-  const guildId = interaction.guildId;
+  const channel    = interaction.options.getChannel('channel');
+  const modRole    = interaction.options.getRole('mod-role');
+  const logChannel = interaction.options.getChannel('log-channel');
+  const guildId    = interaction.guildId;
 
   // Verify the bot can create threads in that channel
   const botMember = interaction.guild.members.me;
@@ -81,8 +89,27 @@ async function runSetup(interaction) {
     });
   }
 
-  const modRoleId = modRole?.id ?? DEFAULT_MOD_ROLE_ID;
-  setConfig(guildId, { staffChannelId: channel.id, modRoleId });
+  // Verify the bot can send messages in the log channel (if provided)
+  if (logChannel) {
+    const logPerms = logChannel.permissionsFor(botMember);
+    if (!logPerms.has(PermissionFlagsBits.SendMessages) || !logPerms.has(PermissionFlagsBits.EmbedLinks)) {
+      return interaction.editReply({
+        content:
+          `❌ I don't have permission to send messages or embed links in ${logChannel}.\n` +
+          `Please grant me **Send Messages** and **Embed Links** in that channel.`,
+      });
+    }
+  }
+
+  const modRoleId    = modRole?.id ?? DEFAULT_MOD_ROLE_ID;
+  const logChannelId = logChannel?.id ?? null;
+  setConfig(guildId, { staffChannelId: channel.id, modRoleId, logChannelId });
+
+  const embedFields = [
+    { name: 'Staff Channel', value: `${channel} (\`${channel.id}\`)`,         inline: false },
+    { name: 'Mod Role',      value: `<@&${modRoleId}> (\`${modRoleId}\`)`,    inline: false },
+    { name: 'Log Channel',   value: logChannel ? `${logChannel} (\`${logChannel.id}\`)` : '*not set*', inline: false },
+  ];
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -92,10 +119,7 @@ async function runSetup(interaction) {
       `Users can now DM the bot to open a support ticket. ` +
       `A thread will be created in ${channel} for each new ticket.`,
     )
-    .addFields(
-      { name: 'Staff Channel', value: `${channel} (\`${channel.id}\`)`, inline: false },
-      { name: 'Mod Role',      value: `<@&${modRoleId}> (\`${modRoleId}\`)`, inline: false },
-    )
+    .addFields(...embedFields)
     .setTimestamp();
 
   return interaction.editReply({ embeds: [embed] });
@@ -135,12 +159,17 @@ async function runDashboard(interaction) {
     ? `<@&${config.modRoleId}> (\`${config.modRoleId}\`)`
     : '*not set*';
 
+  const logChannelMention = config.logChannelId
+    ? `<#${config.logChannelId}> (\`${config.logChannelId}\`)`
+    : '*not set*';
+
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('🎫 Ticket System Dashboard')
     .addFields(
       { name: 'Staff Channel',   value: channelMention,              inline: false },
       { name: 'Mod Role',        value: modRoleMention,              inline: false },
+      { name: 'Log Channel',     value: logChannelMention,           inline: false },
       { name: 'Open Tickets',    value: `${openTickets.length}`,     inline: true  },
       { name: 'Closed Tickets',  value: `${closedTickets.length}`,   inline: true  },
       { name: 'Total Tickets',   value: `${allTickets.length}`,      inline: true  },

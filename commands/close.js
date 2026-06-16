@@ -6,6 +6,7 @@
 
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { getTicketByThread, closeTicket } = require('../services/ticket');
+const { getConfig } = require('../services/guildConfig');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -35,10 +36,12 @@ module.exports = {
       return interaction.editReply({ content: '❌ This ticket is already closed.' });
     }
 
-    const reason = interaction.options.getString('reason') ?? null;
+    const reason       = interaction.options.getString('reason') ?? null;
+    const config       = getConfig(interaction.guildId);
+    const logChannelId = config?.logChannelId ?? null;
 
     try {
-      await closeTicket(client, threadId, interaction.user, reason);
+      await closeTicket(client, threadId, interaction.user, reason, logChannelId);
 
       // The thread is now archived — reply before archiving happens
       const embed = new EmbedBuilder()
