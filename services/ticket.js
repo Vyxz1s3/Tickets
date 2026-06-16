@@ -12,6 +12,7 @@
  *     status:      'open' | 'closed',
  *     priority:    'none' | 'low' | 'medium' | 'high',
  *     claimedBy:   string | null,  // staff member user ID
+ *     reason:      string | null,  // user-provided reason for opening the ticket
  *     createdAt:   string,  // ISO timestamp
  *     closedAt:    string | null,
  *   }
@@ -116,9 +117,10 @@ function getTicketByThread(threadId) {
  * @param {string} guildId
  * @param {string} staffChannelId
  * @param {string} [modRoleId]  — optional role ID to ping in the thread
+ * @param {string} [reason]     — user-provided reason for opening the ticket
  * @returns {Promise<object>} the new ticket record
  */
-async function createTicket(client, dmMessage, guildId, staffChannelId, modRoleId) {
+async function createTicket(client, dmMessage, guildId, staffChannelId, modRoleId, reason) {
   const user     = dmMessage.author;
   const ticketId = _nextId();
 
@@ -127,16 +129,23 @@ async function createTicket(client, dmMessage, guildId, staffChannelId, modRoleI
   if (!staffChannel) throw new Error(`Staff channel ${staffChannelId} not found.`);
 
   // Build the opening embed posted into the thread
+  const openEmbedFields = [
+    { name: 'User',     value: `<@${user.id}> (${user.tag})`, inline: true },
+    { name: 'User ID',  value: user.id,                        inline: true },
+    { name: 'Opened',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false },
+  ];
+
+  if (reason) {
+    openEmbedFields.push({ name: 'Reason', value: reason, inline: false });
+  }
+
   const openEmbed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`🎫 Ticket #${ticketId}`)
     .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-    .addFields(
-      { name: 'User',     value: `<@${user.id}> (${user.tag})`, inline: true },
-      { name: 'User ID',  value: user.id,                        inline: true },
-      { name: 'Opened',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false },
-    )
+    .addFields(...openEmbedFields)
     .setFooter({ text: 'Reply in this thread — messages are forwarded to the user\'s DM.' });
+
 
   // Create the thread
   const threadName = _buildThreadName(ticketId, user.username, 'none');
@@ -178,9 +187,11 @@ async function createTicket(client, dmMessage, guildId, staffChannelId, modRoleI
     status:    'open',
     priority:  'none',
     claimedBy: null,
+    reason:    reason ?? null,
     createdAt: new Date().toISOString(),
     closedAt:  null,
   };
+
 
   const tickets   = _loadTickets();
   const threadMap = _loadThreadMap();
