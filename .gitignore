@@ -1,2 +1,5 @@
 node_modules/
 .env
+
+# Ticket data — persisted at runtime, not committed
+data/*.json
