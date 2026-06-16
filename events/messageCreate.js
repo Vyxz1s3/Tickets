@@ -5,12 +5,11 @@
  *   2. A staff member replies in a ticket thread → forward to user DM
  */
 
-const { ChannelType } = require('discord.js');
+const { ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getConfig }           = require('../services/guildConfig');
 const {
   getOpenTicketByUser,
   getTicketByThread,
-  createTicket,
   forwardDMToThread,
   forwardThreadToDM,
 } = require('../services/ticket');
@@ -78,19 +77,36 @@ async function handleDM(message, client) {
     return;
   }
 
-  // No open ticket — create one
+  // No open ticket — prompt the user for a reason via a modal.
+  // Modals can only be shown in response to an interaction, so we send a
+  // message with a button; clicking it triggers the modal in interactionCreate.
   try {
-    await message.channel.sendTyping().catch(() => {});
-    const ticket = await createTicket(client, message, guild.id, config.staffChannelId, config.modRoleId);
+    // Stash the pending context so the modal handler can retrieve it later.
+    if (!client._pendingTickets) client._pendingTickets = new Map();
+    client._pendingTickets.set(message.author.id, {
+      dmMessage:      message,
+      guildId:        guild.id,
+      staffChannelId: config.staffChannelId,
+      modRoleId:      config.modRoleId ?? null,
+    });
 
-    await message.reply(
-      `Watching our dms 👀\n\n` +
-      `Your support ticket **#${ticket.ticketId}** has been opened! ` +
-      `A staff member will be with you shortly.\n\n` +
-      `Simply reply to this DM to send messages to the support team.`,
-    ).catch(() => {});
+    const button = new ButtonBuilder()
+      .setCustomId('open_ticket_modal')
+      .setLabel('Open Support Ticket')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('🎫');
+
+    const row = new ActionRowBuilder().addComponents(button);
+
+    await message.reply({
+      content:
+        `👋 Thanks for reaching out!\n\n` +
+        `Before we open a ticket, please click the button below and briefly describe ` +
+        `why you're contacting support. This helps our staff assist you faster.`,
+      components: [row],
+    }).catch(() => {});
   } catch (err) {
-    console.error('[messageCreate] Failed to create ticket:', err);
+    console.error('[messageCreate] Failed to prompt for ticket reason:', err);
     await message.reply(
       '❌ Something went wrong while opening your ticket. Please try again later.',
     ).catch(() => {});
