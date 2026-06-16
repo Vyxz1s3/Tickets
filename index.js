@@ -7,6 +7,7 @@ const {
   Collection,
   REST,
   Routes,
+  ActivityType,
 } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
@@ -94,6 +95,9 @@ client.once('ready', async () => {
   } catch (error) {
     console.error('[commands] Failed to register commands:', error);
   }
+
+  client.user.setActivity('our DMs', { type: ActivityType.Watching });
+  console.log('[bot] Status set to "Watching our DMs"');
 });
 
 // ---------------------------------------------------------------------------
