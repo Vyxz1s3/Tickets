@@ -293,15 +293,17 @@ async function claimTicket(client, threadId, staffMember) {
 }
 
 /**
- * Closes a ticket: archives the thread and optionally DMs the user.
+ * Closes a ticket: posts a full transcript to the log channel (if configured),
+ * archives the thread, and optionally DMs the user.
  *
  * @param {import('discord.js').Client} client
  * @param {string} threadId
  * @param {import('discord.js').User} closedBy
  * @param {string} [reason]
+ * @param {string} [logChannelId]  — channel ID to post the transcript to
  * @returns {Promise<object>} updated ticket
  */
-async function closeTicket(client, threadId, closedBy, reason) {
+async function closeTicket(client, threadId, closedBy, reason, logChannelId) {
   const tickets   = _loadTickets();
   const threadMap = _loadThreadMap();
   const userMap   = _loadUserMap();
@@ -321,8 +323,17 @@ async function closeTicket(client, threadId, closedBy, reason) {
   _saveTickets(tickets);
   _saveUserMap(userMap);
 
-  // Archive the thread
+  // Post transcript to log channel before archiving
   const thread = await client.channels.fetch(threadId);
+  if (logChannelId && thread) {
+    try {
+      await _postTranscript(client, thread, ticket, closedBy, reason, logChannelId);
+    } catch (err) {
+      console.error('[closeTicket] Failed to post transcript:', err);
+    }
+  }
+
+  // Archive the thread
   if (thread) {
     const closedName = `[CLOSED] ${thread.name}`.slice(0, 100);
     await thread.setName(closedName).catch(() => {});
@@ -345,6 +356,118 @@ async function closeTicket(client, threadId, closedBy, reason) {
   }
 
   return ticket;
+}
+
+/**
+ * Fetches all messages from a thread and posts a formatted transcript embed
+ * to the designated log channel.
+ *
+ * @param {import('discord.js').Client} client
+ * @param {import('discord.js').ThreadChannel} thread
+ * @param {object} ticket
+ * @param {import('discord.js').User} closedBy
+ * @param {string|null} reason
+ * @param {string} logChannelId
+ */
+async function _postTranscript(client, thread, ticket, closedBy, reason, logChannelId) {
+  // Fetch up to 100 messages at a time (Discord API limit) and collect all
+  const allMessages = [];
+  let lastId;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const options = { limit: 100 };
+    if (lastId) options.before = lastId;
+
+    const batch = await thread.messages.fetch(options);
+    if (batch.size === 0) break;
+
+    allMessages.push(...batch.values());
+    lastId = batch.last().id;
+
+    if (batch.size < 100) break;
+  }
+
+  // Sort oldest → newest
+  allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  // Build the transcript text (skip system/bot embed-only messages that have no content)
+  const transcriptLines = [];
+  for (const msg of allMessages) {
+    if (msg.author.bot && !msg.content) continue; // skip pure-embed bot messages
+
+    const ts        = `<t:${Math.floor(msg.createdTimestamp / 1000)}:T>`;
+    const authorTag = msg.author.bot ? `🤖 ${msg.author.tag}` : `👤 ${msg.author.tag}`;
+    const content   = msg.content || '*[attachment / embed only]*';
+    const attachmentNote = msg.attachments.size > 0
+      ? ` *(+${msg.attachments.size} attachment${msg.attachments.size > 1 ? 's' : ''})*`
+      : '';
+
+    transcriptLines.push(`${ts} **${authorTag}**: ${content}${attachmentNote}`);
+  }
+
+  // Discord embed description cap is 4096 chars — chunk if needed
+  const CHUNK_SIZE = 4000;
+  const fullTranscript = transcriptLines.join('\n') || '*No messages recorded.*';
+  const chunks = [];
+  for (let i = 0; i < fullTranscript.length; i += CHUNK_SIZE) {
+    chunks.push(fullTranscript.slice(i, i + CHUNK_SIZE));
+  }
+
+  const logChannel = await client.channels.fetch(logChannelId);
+  if (!logChannel) return;
+
+  const priorityCfg = PRIORITY_CONFIG[ticket.priority] ?? PRIORITY_CONFIG.none;
+  const openedTs    = Math.floor(new Date(ticket.createdAt).getTime() / 1000);
+  const closedTs    = Math.floor(Date.now() / 1000);
+
+  // Fetch the ticket user for display
+  let ticketUser = null;
+  try { ticketUser = await client.users.fetch(ticket.userId); } catch { /* ignore */ }
+
+  // Fetch the claimer for display
+  let claimerTag = null;
+  if (ticket.claimedBy) {
+    try {
+      const claimer = await client.users.fetch(ticket.claimedBy);
+      claimerTag = claimer.tag;
+    } catch { /* ignore */ }
+  }
+
+  // Header embed — ticket metadata
+  const headerEmbed = new EmbedBuilder()
+    .setColor(priorityCfg.color)
+    .setTitle(`📋 Ticket #${ticket.ticketId} — Closed`)
+    .setThumbnail(ticketUser?.displayAvatarURL({ dynamic: true }) ?? null)
+    .addFields(
+      { name: 'User',       value: ticketUser ? `<@${ticket.userId}> (${ticketUser.tag})` : `\`${ticket.userId}\``, inline: true  },
+      { name: 'Closed by',  value: `${closedBy.tag}`,                                                               inline: true  },
+      { name: 'Priority',   value: `${priorityCfg.emoji || '—'} ${priorityCfg.label}`,                             inline: true  },
+      { name: 'Opened',     value: `<t:${openedTs}:F>`,                                                             inline: true  },
+      { name: 'Closed',     value: `<t:${closedTs}:F>`,                                                             inline: true  },
+      { name: 'Claimed by', value: claimerTag ?? '*unclaimed*',                                                     inline: true  },
+    );
+
+  if (reason) {
+    headerEmbed.addFields({ name: 'Close Reason', value: reason, inline: false });
+  }
+  if (ticket.reason) {
+    headerEmbed.addFields({ name: 'Ticket Reason', value: ticket.reason, inline: false });
+  }
+
+  headerEmbed.setFooter({ text: `Thread ID: ${ticket.threadId}` }).setTimestamp();
+
+  await logChannel.send({ embeds: [headerEmbed] });
+
+  // Transcript embed(s)
+  for (let i = 0; i < chunks.length; i++) {
+    const transcriptEmbed = new EmbedBuilder()
+      .setColor(0x2b2d31)
+      .setTitle(i === 0 ? '📜 Conversation Transcript' : `📜 Transcript (continued ${i + 1})`)
+      .setDescription(chunks[i]);
+
+    await logChannel.send({ embeds: [transcriptEmbed] });
+  }
 }
 
 /**
