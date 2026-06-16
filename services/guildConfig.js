@@ -5,6 +5,7 @@
  *   {
  *     staffChannelId: string,   // ID of the channel where ticket threads are created
  *     logChannelId:   string,   // (optional) ID of a log channel
+ *     modRoleId:      string,   // (optional) ID of the moderation role to ping on new tickets
  *   }
  */
 
@@ -38,7 +39,7 @@ function _save(data) {
 /**
  * Returns the config object for a guild, or null if not configured.
  * @param {string} guildId
- * @returns {{ staffChannelId: string, logChannelId?: string } | null}
+ * @returns {{ staffChannelId: string, logChannelId?: string, modRoleId?: string } | null}
  */
 function getConfig(guildId) {
   const all = _load();
@@ -48,7 +49,7 @@ function getConfig(guildId) {
 /**
  * Merges the provided fields into the guild's config and persists.
  * @param {string} guildId
- * @param {{ staffChannelId?: string, logChannelId?: string }} fields
+ * @param {{ staffChannelId?: string, logChannelId?: string, modRoleId?: string }} fields
  */
 function setConfig(guildId, fields) {
   const all = _load();
